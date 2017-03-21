@@ -37,7 +37,7 @@ void alarm_handler(int sig)
 	stop = 1;
 }
 
-static void do_test(void *map, unsigned long size)
+static unsigned long do_test(void *map)
 {
 	unsigned long count = 0, offset = 0, cycles;
 	signal(SIGALRM, alarm_handler);
@@ -46,16 +46,13 @@ static void do_test(void *map, unsigned long size)
 	do {
 		count++;
 		offset = *(unsigned int *)(map + offset);
-		offset &= size-1;
 	} while (!stop);
 	cycles = lrint(10*(double)FREQ*1000*1000*1000 / count);
-	printf("%.5fns %lu.%06lu iterations (~%lu.%lu cycles) in one second, got to %lu\n",
+	printf("%6.2fns (~%lu.%lu cycles)\n",
 		1000000000.0 / count,
-		count / 1000000,
-		count % 1000000,
 		cycles / 10,
-		cycles % 10,
-		offset);
+		cycles % 10);
+	return offset;
 }
 
 static unsigned long get_num(const char *str)
@@ -86,55 +83,48 @@ static unsigned long get_num(const char *str)
 	return val;
 }
 
-static void *create_map(unsigned long size, unsigned long stride)
+static void randomize_map(void *map, unsigned long size, unsigned long stride)
 {
-	int fd, i;
 	unsigned long off;
-
-	fd = open(".", O_RDWR | O_TMPFILE | O_EXCL, 0);
-	if (fd < 0)
-		die("tempfile creation failed");
-	for (i = 0; i < PAGE_SIZE / 4; i++) {
-		unsigned int data = stride;
-		if (write(fd, &data, 4) != 4)
-			die("stride write failed");
-	}
-
-
-	void *base = mmap(NULL, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (base == MAP_FAILED)
-		die("base mmap failed");
-	for (off = 0; off < size; off += PAGE_SIZE) {
-		void *page = mmap(base + off, PAGE_SIZE, PROT_READ, MAP_FIXED | MAP_SHARED | MAP_FILE, fd, 0);
-		if (page != base + off)
-			die("file mmap failed at offset %ld", off);
-	}
-	return base;
-}
-
-// Hugepage size
-#define HUGEPAGE (2*1024*1024)
-
-static void *create_random_map(unsigned long size, unsigned long stride)
-{
-	unsigned int *lastpos;
-	unsigned int flags = MAP_PRIVATE | MAP_ANONYMOUS;
-	unsigned long off, mapsize;
-	unsigned int *rnd;
-	void *map;
+	unsigned int *lastpos, *rnd;
 	int n;
 
 	rnd = calloc(size / stride + 1, sizeof(unsigned int));
 	if (!rnd)
 		die("out of memory");
+
+	/* Create sorted list of offsets */
 	for (n = 0, off = 0; off < size; n++, off += stride)
 		rnd[n] = off;
+
+	/* Randomize the offsets */
 	for (n = 0, off = 0; off < size; n++, off += stride) {
 		unsigned int m = (unsigned long)random() % (size / stride);
 		unsigned int tmp = rnd[n];
 		rnd[n] = rnd[m];
 		rnd[m] = tmp;
 	}
+
+	/* Create a circular list from the random offsets */
+	lastpos = map;
+	for (n = 0, off = 0; off < size; n++, off += stride) {
+		lastpos = map + rnd[n];
+		*lastpos = rnd[n+1];
+	}
+	*lastpos = rnd[0];
+
+	free(rnd);
+}
+
+// Hugepage size
+#define HUGEPAGE (2*1024*1024)
+
+static void *create_map(unsigned long size, unsigned long stride)
+{
+	unsigned int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+	unsigned long off, mapsize;
+	unsigned int *lastpos;
+	void *map;
 
 	mapsize = size;
 	if (test_hugepage)
@@ -156,18 +146,12 @@ static void *create_random_map(unsigned long size, unsigned long stride)
 		madvise(map, mapsize, MADV_HUGEPAGE);
 	}
 
-	/* Create a random mapping */
-	srandom(time(NULL));
-
-	/* Create a circular list of offsets */
 	lastpos = map;
-	for (n = 0, off = 0; off < size; n++, off += stride) {
-		lastpos = map + rnd[n];
-		*lastpos = rnd[n+1];
+	for (off = 0; off < size; off += stride) {
+		lastpos = map + off;
+		*lastpos = off + stride;
 	}
-	*lastpos = rnd[0];
-
-	free(rnd);
+	*lastpos = 0;
 
 	return map;
 }
@@ -178,6 +162,8 @@ int main(int argc, char **argv)
 	const char *arg;
 	void *map;
 
+	srandom(time(NULL));
+
 	while ((arg = argv[1]) != NULL) {
 		if (*arg != '-')
 			break;
@@ -187,10 +173,10 @@ int main(int argc, char **argv)
 				break;
 			case 'H':
 				test_hugepage = 1;
-			/* fall-through: hugepage implies random-list */
+				continue;
 			case 'r':
 				random_list = 1;
-				break;
+				continue;
 			default:
 				die("Unknown flag '%s'", arg);
 			}
@@ -204,11 +190,11 @@ int main(int argc, char **argv)
 	if (!stride || stride & 3 || size < stride)
 		die("bad arguments: test-tlb [-H] <size> <stride>");
 
-	if (random_list)
-		map = create_random_map(size, stride);
-	else
-		map = create_map(size, stride);
+	map = create_map(size, stride);
 
-	do_test(map, size);
+	if (random_list)
+		randomize_map(map, size, stride);
+
+	stop = do_test(map);
 	return 0;
 }
