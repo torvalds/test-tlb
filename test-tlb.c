@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/time.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -39,19 +40,26 @@ void alarm_handler(int sig)
 
 static unsigned long do_test(void *map)
 {
-	unsigned long count = 0, offset = 0, cycles;
+	unsigned long count = 0, offset = 0, ns;
+	struct timeval start, end;
+	double cycles;
+
 	signal(SIGALRM, alarm_handler);
 	alarm(1);
 
+	gettimeofday(&start, NULL);
 	do {
 		count++;
 		offset = *(unsigned int *)(map + offset);
 	} while (!stop);
-	cycles = lrint(10*(double)FREQ*1000*1000*1000 / count);
-	printf("%6.2fns (~%lu.%lu cycles)\n",
-		1000000000.0 / count,
-		cycles / 10,
-		cycles % 10);
+	gettimeofday(&end, NULL);
+	ns = (end.tv_sec - start.tv_sec)*1000000;
+	ns += end.tv_usec - start.tv_usec;
+	ns *= 1000;
+
+	cycles = (double) ns / count;
+	printf("%6.2fns (~%.1f cycles)\n",
+		cycles, cycles*FREQ);
 	return offset;
 }
 
