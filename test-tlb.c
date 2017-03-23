@@ -152,6 +152,14 @@ static void *create_map(unsigned long size, unsigned long stride)
 		mapsize &= ~(HUGEPAGE-1);
 
 		madvise(map, mapsize, MADV_HUGEPAGE);
+	} else {
+		/*
+		 * Christian Borntraeger tested on an s390, and had
+		 * transparent hugepages set to "always", which meant
+		 * that the small-page case never triggered at all
+		 * unless you explicitly ask for it.
+		 */
+		madvise(map, mapsize, MADV_NOHUGEPAGE);
 	}
 
 	lastpos = map;
