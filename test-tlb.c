@@ -203,7 +203,7 @@ int main(int argc, char **argv)
 
 	size = get_num(argv[1]);
 	stride = get_num(argv[2]);
-	if (!stride || stride & 3 || size < stride)
+	if (stride < 4 || size < stride)
 		die("bad arguments: test-tlb [-H] <size> <stride>");
 
 	map = create_map(size, stride);
