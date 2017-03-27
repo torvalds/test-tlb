@@ -38,14 +38,36 @@ void alarm_handler(int sig)
 	stop = 1;
 }
 
-static unsigned long do_test(void *map)
+/*
+ * Warmup run.
+ *
+ * This is mainly to make sure that we can go around the
+ * map without timing any writeback activity from the cache
+ * from creating the map.
+ */
+static void warmup(void *map)
+{
+	unsigned int offset = 0;
+	do {
+		offset = *(volatile unsigned int *)(map + offset);
+	} while (offset);
+}
+
+static double do_test(void *map)
 {
 	unsigned long count = 0, offset = 0, ns;
 	struct timeval start, end;
-	double cycles;
+	static const struct itimerval itval =  {
+		.it_interval = { 0, 0 },
+		.it_value = { 0, 500000 },
+	};
 
+	/* Do one run without counting */
+	warmup(map);
+
+	stop = 0;
 	signal(SIGALRM, alarm_handler);
-	alarm(1);
+	setitimer(ITIMER_REAL, &itval, NULL);
 
 	gettimeofday(&start, NULL);
 	do {
@@ -57,10 +79,10 @@ static unsigned long do_test(void *map)
 	ns += end.tv_usec - start.tv_usec;
 	ns *= 1000;
 
-	cycles = (double) ns / count;
-	printf("%6.2fns (~%.1f cycles)\n",
-		cycles, cycles*FREQ);
-	return offset;
+	// Make sure the compiler doesn't compile away offset
+	*(volatile unsigned int *)(map + offset);
+
+	return (double) ns / count;
 }
 
 static unsigned long get_num(const char *str)
@@ -177,6 +199,7 @@ int main(int argc, char **argv)
 	unsigned long stride, size;
 	const char *arg;
 	void *map;
+	double cycles;
 
 	srandom(time(NULL));
 
@@ -206,11 +229,20 @@ int main(int argc, char **argv)
 	if (stride < 4 || size < stride)
 		die("bad arguments: test-tlb [-H] <size> <stride>");
 
-	map = create_map(size, stride);
+	cycles = 1e10;
+	for (int i = 0; i < 5; i++) {
+		double d;
 
-	if (random_list)
-		randomize_map(map, size, stride);
+		map = create_map(size, stride);
+		if (random_list)
+			randomize_map(map, size, stride);
 
-	stop = do_test(map);
+		d = do_test(map);
+		if (d < cycles)
+			cycles = d;
+	}
+
+	printf("%6.2fns (~%.1f cycles)\n",
+		cycles, cycles*FREQ);
 	return 0;
 }
