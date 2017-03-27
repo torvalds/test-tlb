@@ -38,6 +38,15 @@ void alarm_handler(int sig)
 	stop = 1;
 }
 
+unsigned long usec_diff(struct timeval *a, struct timeval *b)
+{
+	unsigned long usec;
+
+	usec = (b->tv_sec - a->tv_sec)*1000000;
+	usec += b->tv_usec - a->tv_usec;
+	return usec;
+}
+
 /*
  * Warmup run.
  *
@@ -45,25 +54,39 @@ void alarm_handler(int sig)
  * map without timing any writeback activity from the cache
  * from creating the map.
  */
-static void warmup(void *map)
+static unsigned long warmup(void *map)
 {
 	unsigned int offset = 0;
+	struct timeval start, end;
+
+	gettimeofday(&start, NULL);
 	do {
 		offset = *(volatile unsigned int *)(map + offset);
 	} while (offset);
+	gettimeofday(&end, NULL);
+	return usec_diff(&start, &end);
 }
 
 static double do_test(void *map)
 {
-	unsigned long count = 0, offset = 0, ns;
+	unsigned long count = 0, offset = 0, usec;
 	struct timeval start, end;
-	static const struct itimerval itval =  {
+	struct itimerval itval =  {
 		.it_interval = { 0, 0 },
-		.it_value = { 0, 500000 },
+		.it_value = { 0, 0 },
 	};
 
-	/* Do one run without counting */
-	warmup(map);
+	/*
+	 * Do one run without counting, and make sure we can do
+	 * at least five runs, and have at least about 0.2s of
+	 * timing granularity (0.2s selected randomly to make the
+	 * run-of-five take 1s in the fast case).
+	 */
+	usec = warmup(map) * 5;
+	if (usec < 200000)
+		usec = 200000;
+	itval.it_value.tv_sec = usec / 1000000;
+	itval.it_value.tv_usec = usec % 1000000;
 
 	stop = 0;
 	signal(SIGALRM, alarm_handler);
@@ -75,14 +98,13 @@ static double do_test(void *map)
 		offset = *(unsigned int *)(map + offset);
 	} while (!stop);
 	gettimeofday(&end, NULL);
-	ns = (end.tv_sec - start.tv_sec)*1000000;
-	ns += end.tv_usec - start.tv_usec;
-	ns *= 1000;
+	usec = usec_diff(&start, &end);
 
 	// Make sure the compiler doesn't compile away offset
 	*(volatile unsigned int *)(map + offset);
 
-	return (double) ns / count;
+	// return cycle time in ns
+	return 1000 * (double) usec / count;
 }
 
 static unsigned long get_num(const char *str)
