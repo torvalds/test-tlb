@@ -149,18 +149,33 @@ static void randomize_map(void *map, unsigned long size, unsigned long stride)
 // Hugepage size
 #define HUGEPAGE (2*1024*1024)
 
-static void *create_map(unsigned long size, unsigned long stride)
+static void *create_map(void *map, unsigned long size, unsigned long stride)
 {
 	unsigned int flags = MAP_PRIVATE | MAP_ANONYMOUS;
 	unsigned long off, mapsize;
 	unsigned int *lastpos;
-	void *map;
+
+	/*
+	 * If we're using hugepages, we will just re-use any existing
+	 * hugepage map - the issues with different physical page
+	 * allocations for cache associativity testing just isn't worth
+	 * it with large pages.
+	 *
+	 * With regular pages, just mmap over the old allocation to
+	 * force new page allocations. Hopefully this will then make
+	 * the virtual mapping different enough to matter for timings.
+	 */
+	if (map) {
+		if (test_hugepage)
+			return map;
+		flags |= MAP_FIXED;
+	}
 
 	mapsize = size;
 	if (test_hugepage)
 		mapsize += 2*HUGEPAGE;
 
-	map = mmap(NULL, mapsize, PROT_READ | PROT_WRITE, flags, -1, 0);
+	map = mmap(map, mapsize, PROT_READ | PROT_WRITE, flags, -1, 0);
 	if (map == MAP_FAILED)
 		die("mmap failed");
 
@@ -229,11 +244,12 @@ int main(int argc, char **argv)
 	if (stride < 4 || size < stride)
 		die("bad arguments: test-tlb [-H] <size> <stride>");
 
+	map = NULL;
 	cycles = 1e10;
 	for (int i = 0; i < 5; i++) {
 		double d;
 
-		map = create_map(size, stride);
+		map = create_map(map, size, stride);
 		if (random_list)
 			randomize_map(map, size, stride);
 
