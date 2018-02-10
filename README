@@ -14,7 +14,7 @@ your machine.
       #define HUGEPAGE (2*1024*1024)
 
 if you don't change the FREQ define (it's in gigahertz) the tests still
-work, and the absolute yime values in nanoseconds are correct, but the
+work, and the absolute time values in nanoseconds are correct, but the
 CPU cycle estimation will obviously be completely off.
 
 In addition to the tweakables in the code itself, there are other
@@ -107,7 +107,7 @@ Finally, there are a couple of gotchas you need to be aware of:
 Finally, I've made the license be GPLv2 (which is basically my default
 license), but this is a quick hack and if you have some reason to want
 to use this where another license would be preferable, email me and we
-can discuss the issue.  I will probably accomodate other alternatives in
+can discuss the issue.  I will probably accommodate other alternatives in
 the very unlikely case that somebody actually cares. 
 
                  Linus
