@@ -1,4 +1,4 @@
-Quick memory latency and TLB test program.
+## Quick memory latency and TLB test program.
 
 NOTE! This is a quick hack, and the code itself has some hardcoded
 constants in it that you should look at and possibly change to match
@@ -57,57 +57,54 @@ have the baseline that a bigger page size will get you.
 
 Finally, there are a couple of gotchas you need to be aware of:
 
+* Each timing test is run for just one second, and there is no noise
+  reduction code.  If the machine is busy, that will obviously affect
+  the result.  But even more commonly, other effects will also affect
+  the reported results, particularly the exact pattern of randomization, 
+  and the virtual to physical mapping of the underlying memory allocation. 
 
- * each timing test is run for just one second, and there is no noise
-   reduction code.  If the machine is busy, that will obviously affect
-   the result.  But even more commonly, other effects will also affect
-   the reported results, particularly the exact pattern of
-   randomization, and the virtual to physical mapping of the underlying
-   memory allocation. 
+  So the timings are "fairly stable", but if you want to really explore
+  the latencies you needed to run the test multiple times, to get
+  different virtual-to-physical mappings, and to get different list
+  randomization. 
 
-   So the timings are "fairly stable", but if you want to really explore
-   the latencies you needed to run the test multiple times, to get
-   different virtual-to-physical mappings, and to get different list
-   randomization. 
+* The hugetlb case helps avoid TLB misses, but it has another less
+  obvious secondary effect: it makes the memory area be contiguous in
+  physical RAM in much bigger chunks.  That in turn affects the caching
+  in the normal data caches on a very fundamental level, since you will
+  not see cacheline associativity conflicts within such a contiguous
+  physical mapping. 
 
+  In particular, the hugepage case will sometimes look much better than
+  the normal page size case when you start to get closer to the cache
+  size.  This is particularly noticeable in lower-associativity caches. 
 
- * the hugetlb case helps avoid TLB misses, but it has another less
-   obvious secondary effect: it makes the memory area be contiguous in
-   physical RAM in much bigger chunks.  That in turn affects the caching
-   in the normal data caches on a very fundamental level, since you will
-   not see cacheline associativity conflicts within such a contiguous
-   physical mapping. 
+  If you have a large direct-mapped L4, for example, you'll start to
+  see a *lot* of cache misses long before you are really close to the
+  L4 size, simply because your cache is effectively only covering a
+  much smaller area. 
 
-   In particular, the hugepage case will sometimes look much better than
-   the normal page size case when you start to get closer to the cache
-   size.  This is particularly noticeable in lower-associativity caches. 
+  The effect is noticeable even with something like the 4-way L2 in
+  modern intel cores.  The L2 may be 256kB in size, but depending on
+  the exact virtual-to-physical memory allocation, you might be missing
+  quite a bit long before that, and indeed see higher latencies already
+  with just a 128kB memory area.
 
-   If you have a large direct-mapped L4, for example, you'll start to
-   see a *lot* of cache misses long before you are really close to the
-   L4 size, simply because your cache is effectively only covering a
-   much smaller area. 
+  In contrast, if you run a hugepage test (using as 2MB page on x86),
+  the contiguous memory allocation means that your 256kB area will be
+  cached in its entirety. 
 
-   The effect is noticeable even with something like the 4-way L2 in
-   modern intel cores.  The L2 may be 256kB in size, but depending on
-   the exact virtual-to-physical memory allocation, you might be missing
-   quite a bit long before that, and indeed see higher latencies already
-   with just a 128kB memory area.
-
-   In contrast, if you run a hugepage test (using as 2MB page on x86),
-   the contiguous memory allocation means that your 256kB area will be
-   cached in its entirety. 
-
-   See above on "run the tests several times" to see these kinds of
-   patterns.  A lot of memory latency testers try to run for long times
-   to get added precision, but that's pointless: the variation comes not
-   from how long the benchmark is run, but from underlying allocation
-   pattern differences. 
+  See above on "run the tests several times" to see these kinds of
+  patterns.  A lot of memory latency testers try to run for long times
+  to get added precision, but that's pointless: the variation comes not
+  from how long the benchmark is run, but from underlying allocation
+  pattern differences. 
 
 
 Finally, I've made the license be GPLv2 (which is basically my default
 license), but this is a quick hack and if you have some reason to want
 to use this where another license would be preferable, email me and we
-can discuss the issue.  I will probably accommodate other alternatives in
-the very unlikely case that somebody actually cares. 
+can discuss the issue.  I will probably accommodate other alternatives 
+in the very unlikely case that somebody actually cares. 
 
-                 Linus
+##### Linus
