@@ -138,7 +138,7 @@ static unsigned long get_num(const char *str)
 static void randomize_map(void *map, unsigned long size, unsigned long stride)
 {
 	unsigned long off;
-	unsigned int *lastpos, *rnd;
+	unsigned long *lastpos, *rnd;
 	int n;
 
 	rnd = calloc(size / stride + 1, sizeof(unsigned long));
@@ -151,8 +151,8 @@ static void randomize_map(void *map, unsigned long size, unsigned long stride)
 
 	/* Randomize the offsets */
 	for (n = 0, off = 0; off < size; n++, off += stride) {
-		unsigned int m = (unsigned long)random() % (size / stride);
-		unsigned int tmp = rnd[n];
+		unsigned long m = (unsigned long)random() % (size / stride);
+		unsigned long tmp = rnd[n];
 		rnd[n] = rnd[m];
 		rnd[m] = tmp;
 	}
