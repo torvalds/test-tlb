@@ -141,7 +141,7 @@ static void randomize_map(void *map, unsigned long size, unsigned long stride)
 	unsigned int *lastpos, *rnd;
 	int n;
 
-	rnd = calloc(size / stride + 1, sizeof(unsigned int));
+	rnd = calloc(size / stride + 1, sizeof(unsigned long));
 	if (!rnd)
 		die("out of memory");
 
