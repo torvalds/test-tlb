@@ -13,10 +13,11 @@
 #include <signal.h>
 #include <math.h>
 #include <time.h>
+#include <string.h>
 
 #define PAGE_SIZE 4096
 
-#define FREQ 3.9
+static double FREQ;
 
 static int test_hugepage = 0;
 static int random_list = 0;
@@ -233,6 +234,15 @@ static void *create_map(void *map, unsigned long size, unsigned long stride)
 
 int main(int argc, char **argv)
 {
+	if (strcmp(argv[1], "help") == 0) {
+		printf("-H use hugepages\n"
+		"-r use a random list\n<size> size of data to test\n<stride> amount of bytes"
+		"between array elements when allocating <size>\n<freq> define the CPU frequency" 
+		"to use during testing\nk M G go after <size> and <stride> to specify kilobytes "
+		"megabytes or gigabytes\n\neg.\n./test-tlb 10M 10M 2.0\n");
+		return 0;
+	}
+
 	unsigned long stride, size;
 	const char *arg;
 	void *map;
@@ -244,28 +254,35 @@ int main(int argc, char **argv)
 		if (*arg != '-')
 			break;
 		for (;;) {
+
 			switch (*++arg) {
-			case 0:
-				break;
-			case 'H':
-				test_hugepage = 1;
-				continue;
-			case 'r':
-				random_list = 1;
-				continue;
-			default:
-				die("Unknown flag '%s'", arg);
+				case 0:
+					break;
+				case 'H':
+					test_hugepage = 1;
+					continue;
+				case 'r':
+					random_list = 1;
+					continue;
+				default:
+					die("Unknown flag '%s'", arg);
 			}
 			break;
 		}
 		argv++;
+
 	}
 
 	size = get_num(argv[1]);
 	stride = get_num(argv[2]);
+	FREQ = atof(argv[3]);
+	
 	if (stride < 4 || size < stride)
-		die("bad arguments: test-tlb [-H] <size> <stride>");
+		if (FREQ == 0) {
+			die("Bad arguments: test-tlb [help] [-H] <size> <stride> <freq>");
+		}
 
+	printf("Setting cpu frequency to: %lfghz\n", FREQ);
 	map = NULL;
 	cycles = 1e10;
 	for (int i = 0; i < 5; i++) {
