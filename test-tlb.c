@@ -13,8 +13,9 @@
 #include <signal.h>
 #include <math.h>
 #include <time.h>
+#include <hugetlbfs.h>
 
-#define PAGE_SIZE 4096
+#define PAGE_SIZE getpagesize()
 
 #define FREQ 3.9
 
@@ -169,7 +170,7 @@ static void randomize_map(void *map, unsigned long size, unsigned long stride)
 }
 
 // Hugepage size
-#define HUGEPAGE (2*1024*1024)
+#define HUGEPAGE gethugepagesize()
 
 static void *create_map(void *map, unsigned long size, unsigned long stride)
 {
