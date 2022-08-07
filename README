@@ -1,17 +1,17 @@
-Quick memory latency and TLB test program.
+**Quick memory latency and TLB test program.**
 
 NOTE! This is a quick hack, and the code itself has some hardcoded
 constants in it that you should look at and possibly change to match
 your machine. 
 
-      #define PAGE_SIZE 4096
+     **#define PAGE_SIZE 4096**
 
-      #define FREQ 3.9
+     **#define FREQ 3.9**
 
 .. and then later down..
 
-      // Hugepage size
-      #define HUGEPAGE (2*1024*1024)
+      **// Hugepage size**
+      **#define HUGEPAGE (2*1024*1024)**
 
 if you don't change the FREQ define (it's in gigahertz) the tests still
 work, and the absolute time values in nanoseconds are correct, but the
