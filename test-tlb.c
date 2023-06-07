@@ -38,12 +38,11 @@ void alarm_handler(int sig)
 	stop = 1;
 }
 
-unsigned long usec_diff(struct timeval *a, struct timeval *b)
+static unsigned long usec_diff(const struct timeval *restrict a, const struct timeval *restrict b)
 {
 	unsigned long usec;
 
-	usec = (b->tv_sec - a->tv_sec)*1000000;
-	usec += b->tv_usec - a->tv_usec;
+	usec = (b->tv_sec - a->tv_sec) * 1000000 + b->tv_usec - a->tv_usec;
 	return usec;
 }
 
@@ -54,88 +53,49 @@ unsigned long usec_diff(struct timeval *a, struct timeval *b)
  * map without timing any writeback activity from the cache
  * from creating the map.
  */
-static unsigned long warmup(void *map)
+static unsigned long warmup(volatile unsigned int *offset)
 {
-	unsigned int offset = 0;
 	struct timeval start, end;
 
 	gettimeofday(&start, NULL);
-	do {
-		offset = *(volatile unsigned int *)(map + offset);
-	} while (offset);
+	do
+	{
+		*offset = *(volatile unsigned int *)(offset + *offset);
+	} while (*offset);
 	gettimeofday(&end, NULL);
+
 	return usec_diff(&start, &end);
-}
-
-static double do_test(void *map)
-{
-	unsigned long count = 0, offset = 0, usec;
-	struct timeval start, end;
-	struct itimerval itval =  {
-		.it_interval = { 0, 0 },
-		.it_value = { 0, 0 },
-	};
-
-	/*
-	 * Do one run without counting, and make sure we can do
-	 * at least five runs, and have at least about 0.2s of
-	 * timing granularity (0.2s selected randomly to make the
-	 * run-of-five take 1s in the fast case).
-	 */
-	usec = warmup(map) * 5;
-	if (usec < 200000)
-		usec = 200000;
-	itval.it_value.tv_sec = usec / 1000000;
-	itval.it_value.tv_usec = usec % 1000000;
-
-	stop = 0;
-	signal(SIGALRM, alarm_handler);
-	setitimer(ITIMER_REAL, &itval, NULL);
-
-	gettimeofday(&start, NULL);
-	do {
-		count++;
-		offset = *(unsigned int *)(map + offset);
-	} while (!stop);
-	gettimeofday(&end, NULL);
-	usec = usec_diff(&start, &end);
-
-	// Make sure the compiler doesn't compile away offset
-	*(volatile unsigned int *)(map + offset);
-
-	// return cycle time in ns
-	return 1000 * (double) usec / count;
 }
 
 static unsigned long get_num(const char *str)
 {
-	char *end, c;
-	unsigned long val;
+	static const unsigned long sizes[] = {1, 1 << 10, 1 << 20, 1 << 30};
+	static const char suffixes[] = {' ', 'k', 'M', 'G'};
+	unsigned long size = 0;
+	char *end;
 
 	if (!str)
+	{
 		return 0;
-	val = strtoul(str, &end, 0);
-	if (!val || val == ULONG_MAX)
-		return 0;
-	while ((c = *end++) != 0) {
-		switch (c) {
-		case 'k':
-			val <<= 10;
-			break;
-		case 'M':
-			val <<= 20;
-			break;
-		case 'G':
-			val <<= 30;
-			break;
-		default:
+	}
+	size = strtoul(str, &end, 0);
+	if (*end && end[1])
+	{
+		const char *suffix = strchr(suffixes, *end);
+		if (suffix)
+		{
+			size *= sizes[suffix - suffixes];
+		}
+		else
+		{
 			return 0;
 		}
 	}
-	return val;
+
+	return size;
 }
 
-static void randomize_map(void *map, unsigned long size, unsigned long stride)
+static void randomize_map(volatile unsigned int *map, unsigned long size, unsigned long stride)
 {
 	unsigned long off;
 	unsigned int *lastpos, *rnd;
@@ -150,7 +110,8 @@ static void randomize_map(void *map, unsigned long size, unsigned long stride)
 		rnd[n] = off;
 
 	/* Randomize the offsets */
-	for (n = 0, off = 0; off < size; n++, off += stride) {
+	for (n = 0, off = 0; off < size; n++, off += stride)
+	{
 		unsigned int m = (unsigned long)random() % (size / stride);
 		unsigned int tmp = rnd[n];
 		rnd[n] = rnd[m];
@@ -159,9 +120,10 @@ static void randomize_map(void *map, unsigned long size, unsigned long stride)
 
 	/* Create a circular list from the random offsets */
 	lastpos = map;
-	for (n = 0, off = 0; off < size; n++, off += stride) {
+	for (n = 0, off = 0; off < size; n++, off += stride)
+	{
 		lastpos = map + rnd[n];
-		*lastpos = rnd[n+1];
+		*lastpos = rnd[n + 1];
 	}
 	*lastpos = rnd[0];
 
@@ -169,13 +131,13 @@ static void randomize_map(void *map, unsigned long size, unsigned long stride)
 }
 
 // Hugepage size
-#define HUGEPAGE (2*1024*1024)
+#define HUGEPAGE (2 * 1024 * 1024)
 
-static void *create_map(void *map, unsigned long size, unsigned long stride)
+static unsigned int *create_map(unsigned long size, unsigned long stride)
 {
 	unsigned int flags = MAP_PRIVATE | MAP_ANONYMOUS;
 	unsigned long off, mapsize;
-	unsigned int *lastpos;
+	unsigned int *lastpos, *map;
 
 	/*
 	 * If we're using hugepages, we will just re-use any existing
@@ -187,100 +149,124 @@ static void *create_map(void *map, unsigned long size, unsigned long stride)
 	 * force new page allocations. Hopefully this will then make
 	 * the virtual mapping different enough to matter for timings.
 	 */
-	if (map) {
-		if (test_hugepage)
-			return map;
-		flags |= MAP_FIXED;
-	}
-
-	mapsize = size;
 	if (test_hugepage)
-		mapsize += 2*HUGEPAGE;
-
-	map = mmap(map, mapsize, PROT_READ | PROT_WRITE, flags, -1, 0);
-	if (map == MAP_FAILED)
-		die("mmap failed");
-
-	if (test_hugepage) {
-		unsigned long mapstart = (unsigned long) map;
-		mapstart += HUGEPAGE-1;
-		mapstart &= ~(HUGEPAGE-1);
-		map = (void *)mapstart;
-
-		mapsize = size + HUGEPAGE-1;
-		mapsize &= ~(HUGEPAGE-1);
-
-		madvise(map, mapsize, MADV_HUGEPAGE);
-	} else {
-		/*
-		 * Christian Borntraeger tested on an s390, and had
-		 * transparent hugepages set to "always", which meant
-		 * that the small-page case never triggered at all
-		 * unless you explicitly ask for it.
-		 */
-		madvise(map, mapsize, MADV_NOHUGEPAGE);
+	{
+		flags |= MAP_HUGETLB;
+		mapsize = size + HUGEPAGE;
+	}
+	else
+	{
+		mapsize = size;
 	}
 
-	lastpos = map;
-	for (off = 0; off < size; off += stride) {
-		lastpos = map + off;
-		*lastpos = off + stride;
+	map = aligned_alloc(PAGE_SIZE, mapsize);
+	if (!map)
+		die("aligned_alloc failed");
+
+	if (test_hugepage)
+	{
+		map += PAGE_SIZE;
+		mapsize -= PAGE_SIZE
 	}
-	*lastpos = 0;
+
+	memset(map, 0, mapsize);
+
+	if (random_list)
+	{
+		randomize_map(map, size, stride);
+	}
+	else
+	{
+		/* Create a circular list */
+		lastpos = map;
+		for (off = 0; off < size - stride; off += stride)
+		{
+			lastpos = map + off;
+			*lastpos = off + stride;
+		}
+		*lastpos = 0;
+	}
 
 	return map;
 }
 
 int main(int argc, char **argv)
 {
-	unsigned long stride, size;
-	const char *arg;
-	void *map;
-	double cycles;
+	unsigned int *map, *curpos;
+	unsigned long size, stride, count, totalcount, i, j;
+	unsigned long usec, minusec, maxusec, avgusec;
+	struct sigaction act;
+	struct timeval start, end;
 
-	srandom(time(NULL));
-
-	while ((arg = argv[1]) != NULL) {
-		if (*arg != '-')
-			break;
-		for (;;) {
-			switch (*++arg) {
-			case 0:
-				break;
-			case 'H':
-				test_hugepage = 1;
-				continue;
-			case 'r':
-				random_list = 1;
-				continue;
-			default:
-				die("Unknown flag '%s'", arg);
-			}
-			break;
-		}
-		argv++;
+	if (argc != 4 && argc != 5)
+	{
+		printf("usage: %s size stride count [r]\n", argv[0]);
+		exit(1);
 	}
 
 	size = get_num(argv[1]);
 	stride = get_num(argv[2]);
-	if (stride < 4 || size < stride)
-		die("bad arguments: test-tlb [-H] <size> <stride>");
+	count = get_num(argv[3]);
 
-	map = NULL;
-	cycles = 1e10;
-	for (int i = 0; i < 5; i++) {
-		double d;
-
-		map = create_map(map, size, stride);
-		if (random_list)
-			randomize_map(map, size, stride);
-
-		d = do_test(map);
-		if (d < cycles)
-			cycles = d;
+	if (argc == 5 && argv[4][0] == 'r')
+	{
+		random_list = 1;
 	}
 
-	printf("%6.2fns (~%.1f cycles)\n",
-		cycles, cycles*FREQ);
+	if (!size || !stride || !count)
+	{
+		die("invalid argument");
+	}
+
+	if ((errno = posix_memalign((void **)&curpos, PAGE_SIZE, sizeof(*curpos))))
+	{
+		perror("posix_memalign");
+		exit(1);
+	}
+
+	map = create_map(size, stride);
+
+	act.sa_handler = alarm_handler;
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = 0;
+	sigaction(SIGALRM, &act, NULL);
+
+	minusec = ULONG_MAX;
+	maxusec = 0;
+	totalcount = 0;
+
+	if ((usec = warmup(map)))
+	{
+		printf("warmup took %lu usec\n", usec);
+	}
+
+	gettimeofday(&start, NULL);
+
+	for (i = 0; !stop && i < count; i++)
+	{
+		curpos = map + (unsigned long)random() % (size / stride);
+		alarm(1);
+		j = FREQ;
+		do
+		{
+			*curpos = *(volatile unsigned int *)(curpos + *curpos);
+			j--;
+		} while (j);
+		usec = alarm(0);
+		if (usec >= 1000)
+		{
+			totalcount++;
+			if (usec < minusec)
+				minusec = usec;
+			if (usec > maxusec)
+				maxusec = usec;
+		}
+	}
+
+	gettimeofday(&end, NULL);
+	avgusec = usec_diff(&start, &end) / count;
+
+	printf("min %lu max %lu avg %lu total %lu\n",
+		   minusec, maxusec, avgusec, totalcount);
+
 	return 0;
-}
